@@ -1,1 +1,1 @@
-# agente-juridico-ai
+# aequitas-ai
