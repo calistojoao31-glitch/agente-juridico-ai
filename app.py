@@ -12,7 +12,7 @@ if "messages" not in st.session_state:
 
 # Barra Lateral
 api_key = st.sidebar.text_input("Insira a sua Groq API Key:", type="password")
-uploaded_file = st.sidebar.file_upload("Carregar PDF Jurídico", type="pdf")
+uploaded_file = st.sidebar.file_uploader("Carregar PDF Jurídico", type="pdf")
 
 contexto_pdf = ""
 if uploaded_file:
