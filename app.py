@@ -1,49 +1,65 @@
 import streamlit as st
 from groq import Groq
+from pypdf import PdfReader
 
-st.set_page_config(page_title="Jurista AI 360", page_icon="⚖️", layout="wide")
+st.set_page_config(page_title="Jurista Conversacional", page_icon="⚖️", layout="wide")
 
-st.title("⚖️ Sistema Jurista Completo AI")
-st.markdown("---")
+st.title("⚖️ Jurista AI: Chat & Documentos")
+
+# Inicializar memória da conversa se não existir
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
 # Barra Lateral
 api_key = st.sidebar.text_input("Insira a sua Groq API Key:", type="password")
-st.sidebar.info("Este agente atua como Consultor, Estrategista e Revisor.")
+uploaded_file = st.sidebar.file_upload("Carregar PDF Jurídico", type="pdf")
 
-if api_key:
-    client = Groq(api_key=api_key)
-    
-    # Abas para diferentes funções de um jurista
-    tab1, tab2, tab3 = st.tabs(["📝 Otimização de Peças", "🧠 Análise Estratégica", "📋 Resumo de Processo"])
+contexto_pdf = ""
+if uploaded_file:
+    reader = PdfReader(uploaded_file)
+    for page in reader.pages:
+        contexto_pdf += page.extract_text()
+    st.sidebar.success("PDF lido com sucesso!")
 
-    with tab1:
-        texto_escrita = st.text_area("Insira o texto jurídico para polir:", height=250, key="txt1")
-        if st.button("Refinar Escrita"):
-            prompt = f"Como um jurista de elite, reescreve o texto abaixo para ser mais persuasivo, claro e direto, eliminando juridiquês arcaico:\n\n{texto_escrita}"
+# Exibir histórico de mensagens
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# Lógica de Chat
+if prompt := st.chat_input("Faça uma pergunta sobre o caso ou documento..."):
+    if not api_key:
+        st.error("Por favor, insira a API Key.")
+    else:
+        # Adicionar mensagem do utilizador ao histórico
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # Preparar o contexto para a IA
+        client = Groq(api_key=api_key)
+        
+        # Construir o prompt do sistema com o conteúdo do PDF
+        sistema_prompt = "És um jurista de elite. Responde com base no contexto abaixo e no histórico da conversa."
+        if contexto_pdf:
+            sistema_prompt += f"\n\nCONTEÚDO DO DOCUMENTO:\n{contexto_pdf[:15000]}" # Limite para não travar
+
+        # Chamar a IA com o histórico completo
+        with st.chat_message("assistant"):
+            full_prompt = [{"role": "system", "content": sistema_prompt}] + [
+                {"role": m["role"], "content": m["content"]} for m in st.session_state.messages
+            ]
             
-            with st.spinner("A polir..."):
-                chat_completion = client.chat.completions.create(messages=[{"role": "user", "content": prompt}], model="llama-3.3-70b-versatile")
-                st.success("Versão Sugerida:")
-                st.write(chat_completion.choices[0].message.content)
-
-    with tab2:
-        tese_juridica = st.text_area("Descreve a tua tese ou o caso:", height=250, key="txt2")
-        if st.button("Analisar Riscos"):
-            prompt = f"Atua como o advogado da parte contrária e um juiz rigoroso. Analisa esta tese jurídica e aponta 3 pontos fracos e 3 argumentos contrários que devo esperar:\n\n{tese_juridica}"
+            completion = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=full_prompt
+            )
+            response = completion.choices[0].message.content
+            st.markdown(response)
             
-            with st.spinner("A simular oposição..."):
-                chat_completion = client.chat.completions.create(messages=[{"role": "user", "content": prompt}], model="llama-3.3-70b-versatile")
-                st.info("Análise de Vulnerabilidades:")
-                st.write(chat_completion.choices[0].message.content)
+        # Adicionar resposta ao histórico
+        st.session_state.messages.append({"role": "assistant", "content": response})
 
-    with tab3:
-        processo_longo = st.text_area("Cola aqui o conteúdo bruto do processo/decisão:", height=250, key="txt3")
-        if st.button("Extrair Pontos Chave"):
-            prompt = f"Resume este documento jurídico extraindo: 1. Partes envolvidas, 2. Pedido principal, 3. Fundamentos de direito, 4. Decisão ou prazo iminente:\n\n{processo_longo}"
-            
-            with st.spinner("A resumir..."):
-                chat_completion = client.chat.completions.create(messages=[{"role": "user", "content": prompt}], model="llama-3.3-70b-versatile")
-                st.warning("Resumo Executivo:")
-                st.write(chat_completion.choices[0].message.content)
-else:
-    st.warning("Aguardando API Key na barra lateral...")
+if st.sidebar.button("Limpar Conversa"):
+    st.session_state.messages = []
+    st.rerun()
