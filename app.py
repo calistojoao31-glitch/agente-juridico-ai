@@ -4,34 +4,46 @@ from pypdf import PdfReader
 from duckduckgo_search import DDGS
 from docx import Document
 from io import BytesIO
+import time
 
-st.set_page_config(page_title="Jurista AI: Word & Jurisprudência", page_icon="⚖️", layout="wide")
+st.set_page_config(page_title="Jurista AI: Multi-Chat", page_icon="⚖️", layout="wide")
 
-# Função para criar o ficheiro Word
+# --- INICIALIZAÇÃO DA ESTRUTURA DE DADOS ---
+if "chats" not in st.session_state:
+    st.session_state.chats = {"Conversa 1": []}
+if "current_chat" not in st.session_state:
+    st.session_state.current_chat = "Conversa 1"
+
+# Funções auxiliares
 def criar_docx(texto):
     doc = Document()
-    doc.add_heading('Resposta do Assistente Jurídico AI', 0)
+    doc.add_heading('Resposta Jurídica AI', 0)
     doc.add_paragraph(texto)
     buffer = BytesIO()
     doc.save(buffer)
     buffer.seek(0)
     return buffer
 
-st.title("⚖️ Jurista AI: Inteligência & Documentos")
+# --- BARRA LATERAL: GESTÃO DE CHATS ---
+st.sidebar.title("💬 Meus Chats")
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "last_response" not in st.session_state:
-    st.session_state.last_response = ""
+if st.sidebar.button("➕ Novo Chat"):
+    novo_nome = f"Conversa {len(st.session_state.chats) + 1}"
+    st.session_state.chats[novo_nome] = []
+    st.session_state.current_chat = novo_nome
+    st.rerun()
 
-# --- BARRA LATERAL ---
-api_key = st.sidebar.text_input("Insira a sua Groq API Key:", type="password")
-perfil = st.sidebar.selectbox(
-    "Especialidade:",
-    ["Consultor Geral", "Analisador de Acórdãos/Jurisprudência", "Especialista em Direito Civil", "Especialista em Direito Penal", "Revisor de Estilo"]
-)
-usar_web = st.sidebar.checkbox("Pesquisa Web Ativa")
-uploaded_file = st.sidebar.file_uploader("Upload de Acórdão ou Peça (PDF)", type="pdf")
+# Lista de chats para escolher
+escolha = st.sidebar.radio("Histórico:", list(st.session_state.chats.keys()), index=list(st.session_state.chats.keys()).index(st.session_state.current_chat))
+st.session_state.current_chat = escolha
+
+st.sidebar.markdown("---")
+
+# --- CONFIGURAÇÕES TÉCNICAS ---
+api_key = st.sidebar.text_input("Groq API Key:", type="password")
+perfil = st.sidebar.selectbox("Especialidade:", ["Consultor Geral", "Analisador de Acórdãos", "Especialista Civil", "Especialista Penal", "Revisor"])
+usar_web = st.sidebar.checkbox("Pesquisa Web")
+uploaded_file = st.sidebar.file_uploader("PDF (Fonte)", type="pdf")
 
 contexto_pdf = ""
 if uploaded_file:
@@ -39,18 +51,23 @@ if uploaded_file:
     for page in reader.pages:
         txt = page.extract_text()
         if txt: contexto_pdf += txt
-    st.sidebar.success("Documento lido.")
+    st.sidebar.success("PDF carregado.")
 
-# --- CHAT ---
-for message in st.session_state.messages:
+# --- INTERFACE DE CHAT ---
+st.title(f"⚖️ {st.session_state.current_chat}")
+
+# Mostrar mensagens do chat selecionado
+for message in st.session_state.chats[st.session_state.current_chat]:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-if prompt := st.chat_input("Dúvida, análise de acórdão ou redação..."):
+# Lógica de resposta
+if prompt := st.chat_input("Escreva aqui..."):
     if not api_key:
         st.error("Insira a API Key.")
     else:
-        st.session_state.messages.append({"role": "user", "content": prompt})
+        # Adicionar pergunta do utilizador
+        st.session_state.chats[st.session_state.current_chat].append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
@@ -58,44 +75,36 @@ if prompt := st.chat_input("Dúvida, análise de acórdão ou redação..."):
         
         contexto_web = ""
         if usar_web:
-            with st.spinner("A pesquisar jurisprudência e leis..."):
+            with st.spinner("A pesquisar..."):
                 try:
                     with DDGS() as ddgs:
-                        query = f"{prompt} acórdão tribunal portugal site:dgsi.pt OR site:dre.pt"
-                        resultados = ddgs.text(query, max_results=3)
-                        contexto_web = "\n\nWEB:\n" + "\n".join([r['body'] for r in resultados])
+                        resultados = ddgs.text(f"{prompt} direito portugal", max_results=2)
+                        contexto_web = "\n".join([r['body'] for r in resultados])
                 except: pass
 
-        # Configuração do Prompt conforme o perfil
-        instrucoes = {
-            "Analisador de Acórdãos/Jurisprudência": "És um especialista em analisar decisões dos tribunais superiores (STJ, Relação). Identifica o sumário, a tese vencedora, eventuais votos de vencido e o impacto prático da decisão.",
-            "Consultor Geral": "És um jurista sénior português. Responde com precisão técnica.",
-            "Revisor de Estilo": "Atua como revisor. Melhora o texto jurídico sem alterar o sentido legal."
-        }
-
-        sistema_prompt = f"{instrucoes.get(perfil, 'És um jurista de elite.')}\n\nPDF: {contexto_pdf[:10000]}\nWEB: {contexto_web}"
+        sistema_prompt = f"És um {perfil} em Portugal. PDF: {contexto_pdf[:5000]}. Web: {contexto_web}"
 
         with st.chat_message("assistant"):
-            mensagens_envio = [{"role": "system", "content": sistema_prompt}] + st.session_state.messages[-5:]
+            # Enviar apenas o histórico deste chat específico
+            mensagens_envio = [{"role": "system", "content": sistema_prompt}] + st.session_state.chats[st.session_state.current_chat][-6:]
             
-            completion = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=mensagens_envio, temperature=0.1)
-            response = completion.choices[0].message.content
-            st.markdown(response)
-            st.session_state.last_response = response # Guarda para o Word
-            
-        st.session_state.messages.append({"role": "assistant", "content": response})
+            try:
+                completion = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=mensagens_envio, temperature=0.1)
+                response = completion.choices[0].message.content
+                st.markdown(response)
+                # Guardar resposta no chat correto
+                st.session_state.chats[st.session_state.current_chat].append({"role": "assistant", "content": response})
+                
+                # Botão de download para a última resposta
+                st.download_button("📥 Baixar em Word", data=criar_docx(response), file_name=f"{st.session_state.current_chat}.docx")
+            except Exception as e:
+                st.error(f"Erro na Groq (pode ser o limite de texto): {e}")
 
-# --- BOTÃO DE DOWNLOAD (Apenas se houver resposta) ---
-if st.session_state.last_response:
-    docx_file = criar_docx(st.session_state.last_response)
-    st.download_button(
-        label="📥 Descarregar Resposta em Word (.docx)",
-        data=docx_file,
-        file_name="resposta_juridica.docx",
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    )
-
-if st.sidebar.button("Limpar Tudo"):
-    st.session_state.messages = []
-    st.session_state.last_response = ""
-    st.rerun()
+if st.sidebar.button("🗑️ Apagar este Chat"):
+    if len(st.session_state.chats) > 1:
+        del st.session_state.chats[st.session_state.current_chat]
+        st.session_state.current_chat = list(st.session_state.chats.keys())[0]
+        st.rerun()
+    else:
+        st.session_state.chats = {"Conversa 1": []}
+        st.rerun()
